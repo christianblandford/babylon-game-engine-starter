@@ -27,6 +27,8 @@ export interface ShellOptions {
   engine: AbstractEngine;
   title: string;
   levels: LevelInfo[];
+  /** True when there is a saved game: the main menu then offers "Continue" and "New game" in place of "Play". */
+  canContinue?: () => boolean;
   /** State to start in. */
   initialState: ShellState;
 }
@@ -36,6 +38,10 @@ export interface Shell {
   readonly onStateChanged: Observable<ShellState>;
   /** The player chose a level (from the main menu, the level list, or "Restart"). */
   readonly onLevelRequested: Observable<LevelInfo>;
+  /** The player chose "Continue": pick the saved game up where it was. */
+  readonly onContinueRequested: Observable<void>;
+  /** The player chose "New game": forget the saved game and start from the beginning. */
+  readonly onNewGameRequested: Observable<void>;
   /** The level now loaded, so "Play" and "Restart" know what to start. */
   currentLevel: LevelInfo;
   pause(): void;
@@ -72,6 +78,8 @@ export function createShell(options: ShellOptions): Shell {
 
   const onStateChanged = new Observable<ShellState>();
   const onLevelRequested = new Observable<LevelInfo>();
+  const onContinueRequested = new Observable<void>();
+  const onNewGameRequested = new Observable<void>();
   let state: ShellState = options.initialState;
   let currentLevel = levels[0]!;
 
@@ -221,7 +229,12 @@ export function createShell(options: ShellOptions): Shell {
     switch (screen) {
       case "main":
         heading(options.title);
-        button("Play", () => onLevelRequested.notifyObservers(currentLevel), true);
+        if (options.canContinue?.()) {
+          button("Continue", () => onContinueRequested.notifyObservers(), true);
+          button("New game", () => onNewGameRequested.notifyObservers());
+        } else {
+          button("Play", () => onLevelRequested.notifyObservers(currentLevel), true);
+        }
         if (levels.length > 1) button("Levels", () => show("levels"));
         button("Settings", () => show("settings"));
         break;
@@ -274,6 +287,8 @@ export function createShell(options: ShellOptions): Shell {
     },
     onStateChanged,
     onLevelRequested,
+    onContinueRequested,
+    onNewGameRequested,
     get currentLevel() {
       return currentLevel;
     },
@@ -294,6 +309,8 @@ export function createShell(options: ShellOptions): Shell {
     dispose() {
       onStateChanged.clear();
       onLevelRequested.clear();
+      onContinueRequested.clear();
+      onNewGameRequested.clear();
       scene.dispose();
     },
   };

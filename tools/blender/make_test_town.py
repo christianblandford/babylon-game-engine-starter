@@ -2893,6 +2893,10 @@ def zone(name, lo, hi):
 spawn_at = road_points[42]
 toward_town = road_points[30]
 marker("spawn", *spawn_at, facing=math.atan2(toward_town[0] - spawn_at[0], -(toward_town[1] - spawn_at[1])))
+# A door to another level: where the road leaves for the coast. Going through
+# it replaces the town with the island (it is a world, not an interior).
+away = Vector((spawn_at[0] - toward_town[0], spawn_at[1] - toward_town[1])).normalized() * 7.0
+marker("road_to_coast", spawn_at[0] + away.x, spawn_at[1] + away.y, door="island#spawn_pier", prompt="Take the road to the coast", radius=3.0)
 marker("poi_square", 0.0, -SQUARE_HALF + 3.0, facing=math.pi)
 marker("poi_hall", 0.0, TERRACE_FRONT + 2.0, z=TERRACE + 0.2, facing=math.pi)
 marker("poi_wall_walk", stair_top_x - 5.0, -WALL, z=WALL_HEIGHT + 0.2, facing=math.pi / 2)
@@ -2916,7 +2920,9 @@ for i, (cx, cy, wx, wy) in enumerate(
 
 # Things to use. What each does is the game's business (src/game/interactions.ts).
 marker("well", *WELL_AT, z=1.0, interact="well", prompt="Draw water", radius=2.6)
-marker("hall_door", 0.0, HALL_FRONT - 0.4, z=TERRACE + 1.2, interact="hall_door", prompt="Knock", radius=2.4)
+# A door: it leads to the marker `entrance` in the space `hall` (the hall's
+# inside, its own map: tools/blender/make_town_hall.py). See src/engine/spaces.ts.
+marker("hall_door", 0.0, HALL_FRONT - 0.4, z=TERRACE + 1.2, door="hall#entrance", prompt="Enter the hall", radius=2.4)
 # The gate: the game builds a portcullis here and works it from the lever.
 marker("portcullis", 0.0, -WALL, z=0.0, display="CUBE", scale=(GATE_HALF, 0.15, 2.2), kind="portcullis")
 marker("gate_lever", GATE_HALF + 1.3, -WALL + 2.7, z=1.0, interact="gate_lever", prompt="Lower the gate", radius=2.2)

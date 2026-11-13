@@ -7,6 +7,11 @@
 //       -> maps/test_island.blend, then exports it
 //   npm run map:make-town
 //       -> maps/test_town.blend, then exports it (in 32 m chunks)
+//   npm run map:make-hall
+//       -> maps/test_town.hall.blend (the inside of the town's hall), then
+//          exports it to public/maps/test_town/interiors/hall/ at full detail
+//          only. An interior's files live inside the folder of the level it
+//          belongs to; exporting the level does not disturb them.
 //
 // Set BLENDER=/path/to/blender if it isn't found automatically.
 //
@@ -48,7 +53,7 @@ function blender(args) {
   }
   // Blender is chatty; show only our scripts' own lines and anything that went wrong.
   for (const line of result.stdout.split("\n")) {
-    if (/^\[(export_map|make_test_map|make_test_town)\]|Error|Traceback|^\s+File "/.test(line)) console.log(line);
+    if (/^\[(export_map|make_test_map|make_test_town|make_town_hall)\]|Error|Traceback|^\s+File "/.test(line)) console.log(line);
   }
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
@@ -182,6 +187,19 @@ if (command === "export" && rest[0]) {
   blender(["--factory-startup", "--python", join(root, "tools", "blender", "make_test_town.py"), "--", blendFile]);
   // A town is dense, so smaller chunks than the default keep each one light.
   exportMap(blendFile, rest.includes("--chunk") ? rest : ["--chunk", "32", ...rest]);
+} else if (command === "make-hall") {
+  const blendFile = join(root, "maps", "test_town.hall.blend");
+  blender(["--factory-startup", "--python", join(root, "tools", "blender", "make_town_hall.py"), "--", blendFile]);
+  // An interior is one room, all of it in view at once: nothing is ever far
+  // enough away to want a far version, and a chunk bigger than the room keeps
+  // it from being cut up. (The exporter's grid has a line through the origin
+  // on each axis, so a room built round the origin still has its furniture
+  // listed in up to four chunk files; they load together.)
+  const options = [...rest];
+  if (!options.includes("--chunk")) options.unshift("--chunk", "64");
+  if (!options.includes("--no-lod")) options.unshift("--no-lod");
+  if (!options.includes("--out")) options.push("--out", join(root, "public", "maps", "test_town", "interiors", "hall"));
+  exportMap(blendFile, options);
 } else if (command === "encode-textures" && rest[0]) {
   try {
     await encodeTextures(rest[0]);
@@ -191,6 +209,6 @@ if (command === "export" && rest[0]) {
     process.exit(1);
   }
 } else {
-  console.error("usage:\n  node tools/map.mjs export <file.blend> [export options]\n  node tools/map.mjs make-test\n  node tools/map.mjs make-town");
+  console.error("usage:\n  node tools/map.mjs export <file.blend> [export options]\n  node tools/map.mjs make-test\n  node tools/map.mjs make-town\n  node tools/map.mjs make-hall");
   process.exit(1);
 }

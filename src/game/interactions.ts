@@ -1,3 +1,4 @@
+import type { WorldState } from "../engine/worldState";
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
@@ -17,6 +18,8 @@ export interface InteractionSystems {
   effects: Effects;
   hud: Hud;
   map: StreamedMap | null;
+  /** This level's part of the saved world: what is written here is still so when the level is next built. */
+  state: WorldState;
   /** Tells navigation that a mesh made here is (or is no longer) in the way. */
   blockNavigation(mesh: Mesh, blocked: boolean): void;
 }
@@ -34,15 +37,23 @@ export function setUpInteractions(ctx: GameContext, systems: InteractionSystems)
 }
 
 /** Reactions that suit any level. */
-function everywhere(_ctx: GameContext, { triggers, effects }: InteractionSystems): void {
+function everywhere(_ctx: GameContext, { triggers, effects, state }: InteractionSystems): void {
   // A fire that can be put out and relit. The same Empty carries the effect
   // (`fx`) and the interaction (`interact`), so using it switches that effect.
   // Any number of fires can share the name; each keeps its own state.
   const out = new Set<Interactable>();
+  // Fires put out in an earlier visit are still out.
+  for (const fire of triggers.interactables("campfire")) {
+    if (!fire.marker || !state.get(`fire/${fire.marker.name}.out`, false)) continue;
+    out.add(fire);
+    effects.setPlaced(fire.marker.name, false);
+    fire.prompt = "Light the fire";
+  }
   triggers.onInteract("campfire", (fire) => {
     if (!fire.marker) return;
     const relight = out.delete(fire);
     if (!relight) out.add(fire);
+    state.set(`fire/${fire.marker.name}.out`, relight ? undefined : true);
     effects.setPlaced(fire.marker.name, relight);
     fire.prompt = relight ? "Put out the fire" : "Light the fire";
     if (relight) effects.burst("sparks", fire.position);
@@ -109,11 +120,6 @@ function town(ctx: GameContext, systems: InteractionSystems): void {
     audio.play("land", { volume: 0.4, playbackRate: 1.6 });
     effects.burst("dust", well.position);
   });
-  triggers.onInteract("hall_door", () => {
-    audio.play("land", { volume: 0.7, playbackRate: 1.3 });
-    setTimeout(() => audio.play("land", { volume: 0.7, playbackRate: 1.3 }), 180);
-    hud.toast("Nobody answers.");
-  });
 
   // The gate: Blender marks where it goes and how big it is; the moving part
   // is built here.
@@ -130,7 +136,7 @@ const GATE_SPEED = 1.8;
  * it and it pushes whatever it meets. While it is down, navigation is told,
  * so characters stop trying to walk through the gateway.
  */
-function portcullis(ctx: GameContext, { triggers, hud, blockNavigation }: InteractionSystems, marker: MapMarker): void {
+function portcullis(ctx: GameContext, { triggers, hud, blockNavigation, state }: InteractionSystems, marker: MapMarker): void {
   const { scene, lighting, clock, audio } = ctx;
   const [width, height] = marker.size ?? [6, 4.4, 0.3];
 
@@ -160,8 +166,14 @@ function portcullis(ctx: GameContext, { triggers, hud, blockNavigation }: Intera
   // The marker sits on the ground in the middle of the opening.
   const closedY = marker.position[1] + height / 2;
   const lift = height - 0.5; // how far it rises: clear of a walker's head, hidden in the stonework above
-  let raised = lift;
-  let target = lift;
+  // Down, if that is how it was left.
+  const lowered = state.get("gate.lowered", false);
+  let raised = lowered ? 0 : lift;
+  let target = raised;
+  if (lowered) {
+    blockNavigation(gate, true);
+    for (const lever of triggers.interactables("gate_lever")) lever.prompt = "Raise the gate";
+  }
   gate.position.set(marker.position[0], closedY + raised, marker.position[2]);
 
   const { body } = new PhysicsAggregate(gate, PhysicsShapeType.BOX, { mass: 0, extents: new Vector3(width, height, 0.3) }, scene);
@@ -195,6 +207,7 @@ function portcullis(ctx: GameContext, { triggers, hud, blockNavigation }: Intera
       return;
     }
     target = lowering ? 0 : lift;
+    state.set("gate.lowered", lowering);
     lever.prompt = lowering ? "Raise the gate" : "Lower the gate";
     if (!lowering) blockNavigation(gate, false); // passable again as soon as it starts to rise
     audio.play("land", { volume: 0.5, playbackRate: 2 });

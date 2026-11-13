@@ -200,8 +200,8 @@ export interface Player {
   readonly onJump: Observable<void>;
   /** Fires on touchdown with the downward impact speed in m/s. */
   readonly onLand: Observable<number>;
-  /** Moves the character instantly and stops it. `feetPosition` is where the feet end up. */
-  teleport(feetPosition: Vector3): void;
+  /** Moves the character instantly and stops it. `feetPosition` is where the feet end up; `yaw`, if given, is which way it then faces and looks. */
+  teleport(feetPosition: Vector3, yaw?: number): void;
   /** Changes look settings on the fly (from a settings menu, say). */
   configure(options: Pick<PlayerOptions, "mouseSensitivity" | "stickLookSpeed" | "invertY">): void;
   /** Removes the character from the scene. Also happens automatically when the scene is disposed. */
@@ -272,6 +272,8 @@ const FIRST_PERSON_ZOOM_THRESHOLD = 0.9;
 const ANIMATION_BLEND_RESPONSE = 10;
 /** Time off the ground (s) before the airborne pose starts, so stairs and kerbs don't flicker into it. */
 const AIR_POSE_DELAY = 0.1;
+/** How long after being placed somewhere the character may settle onto the ground in silence (s). */
+const ARRIVAL_GRACE = 0.6;
 /** How far the body pitches with vertical speed while airborne: radians per m/s, and the most it will tilt. */
 const AIR_TILT_PER_SPEED = 0.07;
 const AIR_TILT_MAX = 0.45;
@@ -378,6 +380,14 @@ class PlayerController implements Player {
   private coyote = 0;
   /** Downward speed during the most recent airborne step, reported by `onLand`. */
   private fallSpeed = 0;
+  /**
+   * Seconds left in which touching down is an arrival, not a landing. The
+   * character is put a hand's breadth above the ground when it is spawned or
+   * teleported, and settles: that must not thump, raise dust, splash or
+   * strike the falling pose. Still in the air when this runs out, it really
+   * was dropped from a height, and lands as usual. A jump ends it at once.
+   */
+  private arriving = ARRIVAL_GRACE;
   /** The water's surface height where the character is, while it is in water deep enough to matter. */
   private waterSurface = 0;
   /** 0 on land, 1 afloat: eases between, for the bob and the body's tilt. */
@@ -551,12 +561,19 @@ class PlayerController implements Player {
     this.onViewModeChanged.notifyObservers(mode);
   }
 
-  teleport(feetPosition: Vector3): void {
+  teleport(feetPosition: Vector3, yaw?: number): void {
+    if (yaw !== undefined) {
+      this.yaw = yaw;
+      this.pitch = 0;
+      this.root.rotation.y = this.facing = yaw;
+    }
     this.root.position.copyFrom(feetPosition);
     this.controller.setPosition(this.scratch.copyFrom(feetPosition).addInPlaceFromFloats(0, this.feetOffset, 0));
     this.controller.setVelocity(this.zero);
     this.state = "IN_AIR";
     this.fallSpeed = 0;
+    this.arriving = ARRIVAL_GRACE;
+    this.airTime = 0;
     this.coyote = 0;
     this.groundSpeed = 0;
     this.stepLag.setAll(0);
@@ -643,14 +660,18 @@ class PlayerController implements Player {
     // Leaving the water puts the character back in the ordinary states.
     if (previous === "SWIMMING" && !inWater) this.state = supported ? "ON_GROUND" : "IN_AIR";
     this.state = this.nextState(supported, dt, inWater);
+    const arrived = this.arriving > 0; // just placed here: whatever it touches first, it touches quietly
     if (this.state === "ON_GROUND" && previous === "IN_AIR") {
-      if (this.fallSpeed >= this.settings.minLandSpeed) this.onLand.notifyObservers(this.fallSpeed);
+      if (!arrived && this.fallSpeed >= this.settings.minLandSpeed) this.onLand.notifyObservers(this.fallSpeed);
       this.fallSpeed = 0;
     }
     if ((this.state === "SWIMMING") !== (previous === "SWIMMING") && this.state !== "START_JUMP") {
-      this.onSwimChanged.notifyObservers({ swimming: this.state === "SWIMMING", speed: this.fallSpeed });
+      if (!arrived) this.onSwimChanged.notifyObservers({ swimming: this.state === "SWIMMING", speed: this.fallSpeed });
       this.fallSpeed = 0;
     }
+    // Runs out with time, not on first touching ground: the frame after a
+    // teleport the controller may still report the ground it stood on before.
+    this.arriving = this.state === "START_JUMP" ? 0 : Math.max(0, this.arriving - dt);
 
     this.computeVelocity(dt, gravity, this.newVelocity);
     if (this.state === "START_JUMP") {
@@ -1070,7 +1091,7 @@ class PlayerController implements Player {
     // Airborne (jumping or falling) takes over from all three once the feet
     // have been off the ground for a moment.
     const swimming = this.state === "SWIMMING";
-    this.airTime = this.state === "ON_GROUND" || swimming ? 0 : this.airTime + dt;
+    this.airTime = this.state === "ON_GROUND" || swimming || this.arriving > 0 ? 0 : this.airTime + dt;
     const airborne = this.air.group && this.airTime > AIR_POSE_DELAY ? 1 : 0;
     const afloat = swimming ? 1 : 0;
     const grounded = (1 - airborne) * (1 - afloat);

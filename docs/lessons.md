@@ -477,6 +477,64 @@ What is left: a single collision shape for a block of houses still costs up
 to 11 ms. Collision meshes simpler than the visible ones (a `Colliders`
 collection in Blender) would remove that and make physics cheaper too.
 
+## Doors and interiors
+
+- **Babylon has no level or door system**, and no library fills the gap. It
+  has asset containers (what map streaming is built on) and several scenes
+  per engine. A second scene shares nothing: its own physics world, lights
+  and compiled shaders, so entering one pays for all of it. An interior as a
+  second *map in the same scene*, placed beside the level, shares everything.
+- **Do not park things kilometres from the origin.** Interiors first went
+  2 km out, past the camera's far plane, so that neither place could see the
+  other. At 2,048 m a 32-bit position is good to a quarter of a millimetre,
+  and after the vertex shader's arithmetic two surfaces 4 or 5 mm apart (a
+  runner on a table cloth, a device on a banner) swap, whole, as the camera
+  turns: "flickering between two materials". They now go 200 m past the
+  level's edge (eight times finer) and the place the player is not in is
+  hidden (`map.shown = false`). To find this kind of fault: turn off TAA,
+  SSAO and particles, render the same view five times with the camera turned
+  by 0.00002 rad between each, and map the per-pixel range. Surfaces that
+  swap light up as whole shapes; everything else stays black.
+- A Blender probe that ray-casts from every face along its normal and lists
+  pairs within a centimetre (`OVERLAP` lines, by object and material) shows
+  where a model has such layers. Keep them 1 cm apart or cut the lower one.
+- **Placing a map away from zero** is: move each loaded file's root nodes,
+  and move everything the manifest says in world coordinates (markers, chunk
+  bounds, and the two images laid over the ground from above, whose mapping
+  is `u = x * a + c`). The whole island was loaded this way as a test and
+  everything worked first time: batches, collision, effects, shadows.
+- **A map streams around the camera, so a map the camera is not in unloads
+  itself.** The first version took 2.7 s for a trip that should take 0.4:
+  the destination was released to follow the camera a moment before the
+  camera arrived, dropped everything, and loaded it again. Hold the space
+  being left at the point of leaving, hold the destination at the arrival
+  point until the player has been placed and a frame has passed, and hold a
+  preloaded interior at its own middle.
+- **Indoors, leave the sun on.** Sky light cannot be shadowed, so it is what
+  must be turned down (to a fifth); the sun still casts shadows, and through
+  real window openings in a closed box it gives shafts of light for free.
+- **Hide first-sight costs behind the black.** After moving the player, a
+  few frames are drawn before the fade lifts, so shaders for what is seen
+  for the first time compile unseen.
+- **Per-frame "every Nth frame" counters must not be shared.** Placed effects
+  used one counter for one map; with two maps, each observer saw every other
+  count and one of them never came up.
+- **Babylon has no save-game system either.** `SceneSerializer` writes out a
+  whole scene and is the wrong tool; `DataStorage` is a guarded key-value
+  wrapper over local storage and is enough to build on. A save is the
+  handful of facts that differ from the level as built, each read back at
+  the place the thing is made.
+- **A saved position inside an interior must be relative to the interior.**
+  Where an interior lands in the scene depends on the order things were
+  loaded in; the first version saved world coordinates and would have put
+  the player in the void the day a second interior existed.
+- **Resuming inside an interior is a trip made during loading**, and a trip
+  waits on frames: the scene is not on screen yet, so they are drawn by hand
+  until it arrives. Nobody walked in, so "back" has no record to go by: it
+  falls back to any door that leads into the place.
+- Measured: door to arrival 0.4 s, 0.65 s including the fade back in, both
+  ways. A door to another level (scene rebuilt) 3.3 s.
+
 ## Testing in the browser
 
 When a lighting fault resists explanation, stop theorising and bisect with
@@ -527,6 +585,10 @@ than that would have.
   mirror**: its X is negated. To find an instance in the world, apply the
   mesh's own world matrix to the stored matrix's translation.
 - The player's `pitch` is positive looking down.
+- **A page that is not being drawn runs no frames at all**, even when
+  `document.hidden` is false. Anything that waits for frames (a fade, a
+  settle) then waits for its timeout instead, and a 0.4 s trip measures as
+  3.3 s. Pump frames by hand while timing.
 - Check every rendering change three ways: default (WebGPU),
   `?renderer=classic`, and `?engine=webgl`. Shader plugins especially: the
   GLSL half is only exercised on WebGL2, the WGSL half only on WebGPU.

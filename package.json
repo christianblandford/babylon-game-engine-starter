@@ -11,6 +11,7 @@
     "map:export": "node tools/map.mjs export",
     "map:make-test": "node tools/map.mjs make-test",
     "map:make-town": "node tools/map.mjs make-town",
+    "map:make-hall": "node tools/map.mjs make-hall",
     "texture:get": "node tools/textures.mjs",
     "model:get": "node tools/models.mjs"
   },

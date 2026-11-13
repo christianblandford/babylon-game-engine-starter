@@ -5,6 +5,8 @@
 
 import { getSettings } from "./engine/settings";
 
+import type { Environment } from "./engine/spaces";
+
 export type QualityLevel = "low" | "medium" | "high" | "ultra";
 
 export interface QualitySettings {
@@ -92,10 +94,65 @@ export interface LevelInfo {
    * middle of anything the player doesn't start within sight of.
    */
   warmUp?: string[];
+  /** The light in this place, as shares of the scene's own: see `Environment` in engine/spaces.ts. */
+  environment?: Partial<Environment>;
+  /**
+   * The insides of things in this level: a hall, a shop, a cellar. Each is
+   * its own small map, reached through a door (a Blender Empty with
+   * `door = "<its id>#<marker>"`), loaded beside the level as the player
+   * walks up and entered behind a short fade, with no loading screen
+   * (engine/spaces.ts). By convention its files live inside the level's own
+   * folder, under `interiors/<id>/`. `?level=<level id>/<id>` starts inside
+   * one, which is how to work on it.
+   */
+  interiors?: InteriorInfo[];
+  /** Set on the level made up for starting inside an interior: it is lit as one. */
+  indoors?: boolean;
+}
+
+/** The inside of something in a level. See `LevelInfo.interiors`. */
+export interface InteriorInfo {
+  /**
+   * Unique within its level. Doors name it: `door = "hall#entrance"`. The
+   * list is flat, because places joined by doors are a web, not a tree (a
+   * cave can open into the hall's cellar *and* onto the hillside); where one
+   * place plainly belongs to another, say so in the id, as a path:
+   * `hall/cellar`, `caves/upper`, with its files under `interiors/hall/cellar/`.
+   */
+  id: string;
+  name: string;
+  map: string;
+  /** Its light, as shares of the level's own, over `INDOORS` in engine/spaces.ts. */
+  environment?: Partial<Environment>;
 }
 
 export const LEVELS: LevelInfo[] = [
-  { id: "town", name: "Test Town", map: "/maps/test_town/map.json", demoProps: false, detailDistance: 80, sunDirection: [0.45, 0.6, 0.66], warmUp: ["town_gate", "poi_square", "poi_hall", "poi_duck_pond", "poi_pond", "poi_farm"] },
+  {
+    id: "town",
+    name: "Test Town",
+    map: "/maps/test_town/map.json",
+    demoProps: false,
+    detailDistance: 80,
+    sunDirection: [0.45, 0.6, 0.66],
+    warmUp: ["town_gate", "poi_square", "poi_hall", "poi_duck_pond", "poi_pond", "poi_farm"],
+    // The inside of the hall, entered through its door.
+    interiors: [{ id: "hall", name: "Town Hall", map: "/maps/test_town/interiors/hall/map.json" }],
+  },
   { id: "island", name: "Test Island", map: "/maps/test_island/map.json", warmUp: ["spawn_pier", "poi_summit"] },
   { id: "flat", name: "Flat Ground", map: null },
 ];
+
+/**
+ * Looks a level up by id. "town" is a level; "town/hall" is the interior
+ * `hall` of the level `town`, returned as a level of its own (the same sun,
+ * lit as a room) for starting inside it.
+ */
+export function findLevel(id: string | null): LevelInfo | undefined {
+  if (!id) return undefined;
+  const cut = id.indexOf("/");
+  const [levelId, interiorId] = cut < 0 ? [id, ""] : [id.slice(0, cut), id.slice(cut + 1)];
+  const level = LEVELS.find((candidate) => candidate.id === levelId);
+  if (!level || !interiorId) return level;
+  const interior = level.interiors?.find((candidate) => candidate.id === interiorId);
+  return interior && { id, name: interior.name, map: interior.map, demoProps: false, sunDirection: level.sunDirection, environment: interior.environment, indoors: true };
+}

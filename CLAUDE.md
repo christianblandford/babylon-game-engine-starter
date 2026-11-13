@@ -102,6 +102,28 @@ first.
   be picked individually should not be a linked duplicate, or should be
   built in code at a marker.
 
+- Places and the doors between them are `src/engine/spaces.ts`: a Blender
+  Empty with `door = "<place id>#<marker>"`. An interior is listed inside
+  its level's entry in `LEVELS` (`interiors`), its files under that level's
+  folder (`public/maps/<level>/interiors/<id>/`); the list is flat, ids may
+  be paths (`hall/cellar`). It is loaded as a second map in the running scene (`loadMap`'s `origin`),
+  200 m past the level's edge, and entered behind a fade; the map left
+  behind is hidden (`map.shown`) and held (`map.hold`), never unloaded. Keep
+  everything within a few hundred metres of the origin: at 2 km, surfaces a
+  few millimetres apart flicker. Anything else is a change of level through
+  `host.travelTo`. Three things to keep true: whatever is attached to "the
+  map" (effects, triggers) must cope with several maps at once; a map that
+  streams around the camera must be held whenever the camera is in another
+  space, or it unloads itself; and an interior must be a closed box, because
+  the sun stays on and only the sky's ambient light is turned down.
+
+- Anything that should stay changed after the level is rebuilt (a gate, a
+  fire, a chest) is written to `ctx.state` (`src/engine/worldState.ts`) and
+  read back where the thing is built; `interactions.ts` gets it already
+  scoped to the level. It is saved to the browser by itself. Positions kept
+  in it must be relative to `spaces.origin(place)`: where an interior sits
+  in the scene depends on what was loaded before it.
+
 - Trigger zones and usable things go through `src/engine/triggers.ts`; what
   they do belongs in `src/game/interactions.ts`, keyed by name. Zones are
   Havok trigger shapes reported by the physics plugin's

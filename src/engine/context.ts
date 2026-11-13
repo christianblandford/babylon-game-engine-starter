@@ -3,6 +3,7 @@ import type { QualitySettings } from "../config";
 import type { GameClock } from "./clock";
 import type { Input } from "./input";
 import type { Renderer } from "./renderer";
+import type { WorldState } from "./worldState";
 
 /** Sun, sky, image-based lighting and shadows. Implemented in `lighting.ts`. */
 export interface Lighting {
@@ -43,4 +44,6 @@ export interface GameContext {
   /** Shadows, post-processing and on-screen UI surfaces. */
   readonly renderer: Renderer;
   readonly audio: AudioSystem;
+  /** What has been changed in the world, kept across levels and saved in the browser. See worldState.ts. */
+  readonly state: WorldState;
 }

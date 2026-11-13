@@ -668,6 +668,8 @@ for i in range(7):
         collision="none",
     )
 marker("spawn_pier", math.cos(bearing) * (shore - 4), math.sin(bearing) * (shore - 4), facing=bearing + math.pi / 2)
+# A door to another level: the way back to the town, from the landing place.
+marker("boat_to_town", math.cos(bearing) * (shore - 9), math.sin(bearing) * (shore - 9), door="town#spawn", prompt="Sail to the town", radius=3.5)
 peak = np.unravel_index(np.argmax(height), height.shape)
 marker("poi_summit", float(X[peak]), float(Y[peak]), kind="viewpoint")
 

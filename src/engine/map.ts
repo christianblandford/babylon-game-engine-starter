@@ -124,6 +124,13 @@ export interface MapOptions {
   materials?: Record<string, MaterialOverride>;
   /** Makes the map's plants sway: materials with the Blender custom property `wind` are attached to it. */
   wind?: Wind;
+  /**
+   * Where the map's own origin goes in the world. For a second map in the
+   * same scene (an interior beside the level it belongs to, see spaces.ts):
+   * everything in it, its markers and its chunks are moved by this much, so
+   * its author builds it around zero and never thinks about where it lands.
+   */
+  origin?: Vector3;
 }
 
 export interface MaterialOverride {
@@ -170,6 +177,18 @@ export interface StreamedMap {
    */
   whenLoadedAround(position: Vector3, radius?: number): Promise<void>;
   /**
+   * Streams around this point instead of the camera, until called with null.
+   * For when the camera is somewhere this map is not (inside a building that
+   * is its own map): what is loaded stays exactly as the player left it.
+   */
+  hold(point: Vector3 | null): void;
+  /**
+   * False hides everything the map has loaded, and whatever it loads while
+   * hidden: nothing of it is drawn or casts a shadow. Its collision stays.
+   * For a map the player is not in (see spaces.ts).
+   */
+  shown: boolean;
+  /**
    * Register a movable physics body that rests on the map. While the ground
    * under it isn't loaded with collision it is held in place, instead of
    * falling out of the world; it starts moving again when the player returns.
@@ -205,6 +224,8 @@ interface Loaded {
   /** Unique meshes and their Blender object's custom properties (full-detail chunks only). */
   tagged: Map<Mesh, ObjectExtras>;
   obstacles: MapObstacle[];
+  /** Shows or hides everything this file put in the scene. */
+  show(on: boolean): void;
   dispose(): void;
 }
 
@@ -349,6 +370,29 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
   if (!response.ok) throw new Error(`Map manifest not found: ${url} (${response.status})`);
   const manifest = (await response.json()) as MapManifest;
   const baseUrl = url.slice(0, url.lastIndexOf("/") + 1);
+  // A map placed away from zero: everything the manifest says in world
+  // coordinates moves with it. (The files' contents are moved as they load.)
+  const origin = options.origin?.clone() ?? Vector3.Zero();
+  if (origin.lengthSquared() > 0) {
+    const shift = (point: [number, number, number]): void => {
+      point[0] += origin.x;
+      point[1] += origin.y;
+      point[2] += origin.z;
+    };
+    shift(manifest.min);
+    shift(manifest.max);
+    for (const marker of manifest.markers) shift(marker.position);
+    for (const chunk of manifest.chunks) {
+      shift(chunk.min);
+      shift(chunk.max);
+    }
+    // Images laid over the ground from above: u = x * a + c, v = z * b + d.
+    for (const laid of [...(manifest.blends ?? []), ...(manifest.heights ? [manifest.heights] : [])]) {
+      laid.map[2] -= origin.x * laid.map[0];
+      laid.map[3] -= origin.z * laid.map[1];
+    }
+    if (manifest.heights) manifest.heights.low += origin.y;
+  }
   if (manifest.textures?.ktx2) await useLocalKtx2Decoder();
 
   const hysteresis = manifest.chunkSize * 0.25; // stops chunks flickering at a boundary
@@ -384,6 +428,8 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
   const anchored = new Map<PhysicsBody, boolean>(); // movable body -> currently held in place?
   const onDetailChanged = new Observable<void>();
   const pins = new Set<Vector3>(); // extra points to keep loaded around, besides the camera
+  let held: Vector3 | null = null; // streams around here instead of the camera (see `hold`)
+  let shown = true;
   const waiters: Array<() => void> = [];
   let activeLoads = 0;
   let disposed = false;
@@ -780,6 +826,16 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
       return !(disposed || scene.isDisposed);
     };
     timed("  add to scene", () => container.addAllToScene());
+    if (origin.lengthSquared() > 0) {
+      for (const node of [...container.meshes, ...container.transformNodes]) if (!node.parent) node.position.addInPlace(origin);
+    }
+    // Meshes end up with no parent in common (each is baked into place), so
+    // hiding a file is hiding each of its meshes. `isVisible` is not used for
+    // this: the set-up below switches that on object by object.
+    const show = (on: boolean): void => {
+      for (const mesh of container.meshes) mesh.setEnabled(on);
+    };
+    if (!shown) show(false);
     const usedMaterials = timed("  share materials", () => shareMaterials(container));
     timed("  pool meshes", () => poolSharedMeshes(container));
 
@@ -995,6 +1051,7 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
     });
 
     freezeMaterials();
+    if (!shown) show(false); // again: the set-up made meshes of its own
 
     // One static body carries every collider in the chunk.
     let colliderNode: TransformNode | null = null;
@@ -1015,6 +1072,7 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
       walkable,
       tagged,
       obstacles,
+      show,
       dispose() {
         body?.dispose();
         colliders.dispose();
@@ -1074,7 +1132,7 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
 
   function update(): void {
     if (disposed) return;
-    const focus = camera.globalPosition;
+    const focus = held ?? camera.globalPosition;
     const queue: ChunkState[] = [];
 
     for (const chunk of chunks) {
@@ -1218,6 +1276,20 @@ export async function loadMap(ctx: GameContext, url: string, options: MapOptions
         // the camera there has time to do it.
         setTimeout(() => pins.delete(pin), 2000);
       }
+    },
+    hold(point) {
+      held = point ? point.clone() : null;
+      update();
+    },
+    get shown() {
+      return shown;
+    },
+    set shown(on: boolean) {
+      if (on === shown) return;
+      shown = on;
+      poolRoot.setEnabled(on); // and with it every batch of pooled meshes
+      globalContent?.show(on);
+      for (const chunk of chunks) chunk.loaded?.show(on);
     },
     anchor(body) {
       anchored.set(body, false);

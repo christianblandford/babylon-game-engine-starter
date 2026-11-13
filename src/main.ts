@@ -1,9 +1,10 @@
 import "./engine/babylonFeatures"; // first: registers the engine features the game relies on
-import { LEVELS, getQuality, type LevelInfo } from "./config";
+import { LEVELS, findLevel, getQuality, type LevelInfo } from "./config";
 import { createAudio } from "./engine/audio";
 import { applyPixelRatio, createEngine } from "./engine/createEngine";
 import { Input } from "./engine/input";
 import { getSettings, onSettingsChanged } from "./engine/settings";
+import { createWorldState } from "./engine/worldState";
 import { createGameScene, type GameScene } from "./game/scene";
 import { createShell } from "./game/shell";
 
@@ -15,7 +16,7 @@ const params = new URLSearchParams(location.search);
 const debugEnabled = import.meta.env.DEV || params.has("debug");
 
 let factory: SceneFactory = createGameScene;
-let loadScene: (next?: SceneFactory, level?: LevelInfo) => Promise<void> = async (next) => {
+let loadScene: (next?: SceneFactory, level?: LevelInfo, arrival?: string, resume?: boolean) => Promise<void> = async (next) => {
   if (next) factory = next; // engine still booting; picked up by the first load
 };
 
@@ -35,17 +36,25 @@ async function boot(): Promise<void> {
     ? new (await import("./engine/debug")).DebugTools({ engine, reloadScene: () => void loadScene() })
     : null;
 
+  // What the player has changed in the world, and where they were: kept
+  // across levels, saved in the browser. `?newgame` starts it empty.
+  const state = createWorldState();
+  if (params.has("newgame")) state.reset();
+  /** The level the saved game was last in, if there is one. */
+  const savedLevel = (): LevelInfo | undefined => findLevel(state.get("player/level", ""));
+
   // Menus. Players start at the main menu; in development you drop straight
   // into the game (add ?menu to the URL to see the menu flow).
   const shell = createShell({
     engine,
     title: "Babylon Game Scaffold",
     levels: LEVELS,
+    canContinue: () => savedLevel() !== undefined,
     initialState: import.meta.env.DEV && !params.has("menu") ? "playing" : "menu",
   });
 
-  // `?level=town` starts in a particular level.
-  shell.currentLevel = LEVELS.find((level) => level.id === params.get("level")) ?? shell.currentLevel;
+  // `?level=town` starts in a particular level; `?level=town/hall` inside one of its interiors.
+  shell.currentLevel = findLevel(params.get("level")) ?? shell.currentLevel;
 
   let current: GameScene | null = null;
   let loadId = 0;
@@ -59,7 +68,7 @@ async function boot(): Promise<void> {
     else input.exitPointerLock();
   };
 
-  loadScene = async (next = factory, level = shell.currentLevel) => {
+  loadScene = async (next = factory, level = shell.currentLevel, arrival, resume = false) => {
     factory = next;
     const id = ++loadId;
     const quality = getQuality();
@@ -67,7 +76,20 @@ async function boot(): Promise<void> {
     if (!firstLoad && level !== shell.currentLevel) loading.classList.remove("hidden");
     try {
       // The old scene keeps rendering while the new one loads, then they swap.
-      const created = await next({ engine, canvas, input, audio, quality, level, debug: debugEnabled });
+      const created = await next({
+        engine,
+        canvas,
+        input,
+        audio,
+        quality,
+        level,
+        arrival,
+        state,
+        resume,
+        debug: debugEnabled,
+        // A door that leads to another level: load it, and arrive at the door's marker.
+        travelTo: (next, marker) => void loadScene(factory, next, marker),
+      });
       if (id !== loadId) {
         created.dispose(); // a newer load started meanwhile
         return;
@@ -99,6 +121,16 @@ async function boot(): Promise<void> {
     void (fresh ? loadScene(factory, level) : Promise.resolve()).then(() => shell.resume());
   });
 
+  // "Continue": back to the level, the place in it and the spot the save was made at.
+  shell.onContinueRequested.add(() => {
+    void loadScene(factory, savedLevel() ?? shell.currentLevel, undefined, true).then(() => shell.resume());
+  });
+  // "New game": forget everything, start the first level from its beginning.
+  shell.onNewGameRequested.add(() => {
+    state.reset();
+    void loadScene(factory, LEVELS[0]!).then(() => shell.resume());
+  });
+
   // Losing the mouse capture mid-game (Esc, alt-tab) pauses, as players expect.
   document.addEventListener("pointerlockchange", () => {
     if (!input.pointerLocked) shell.pause();
@@ -125,7 +157,9 @@ async function boot(): Promise<void> {
   });
   new ResizeObserver(() => engine.resize()).observe(canvas);
 
-  await loadScene();
+  // `?continue` picks the saved game up where it was (in development there is no menu to ask from).
+  if (params.has("continue") && savedLevel()) await loadScene(factory, savedLevel(), undefined, true);
+  else await loadScene();
 }
 
 void boot();

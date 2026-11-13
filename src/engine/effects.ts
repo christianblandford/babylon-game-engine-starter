@@ -16,7 +16,9 @@ import type { MapMarker, StreamedMap } from "./map";
  *
  * - `dust`, `sparks`: small bursts defined in code in this file. Copy one as
  *   the starting point for an effect of your own.
- * - `campfire`: fire + smoke + a flickering light. `explosion`: adds a flash.
+ * - `campfire`: fire + smoke + a flickering light. `brazier`: the same
+ *   without the smoke, for a fire indoors or in a hearth, where a column of
+ *   sunlit smoke has no business. `explosion`: adds a flash.
  * - Anything else is a **particle file**: `spawn("magic")` loads
  *   `/assets/particles/systems/magic.json`, with its textures under
  *   `/assets/particles/textures/`. That is the format Babylon's particle
@@ -25,7 +27,7 @@ import type { MapMarker, StreamedMap } from "./map";
  * `fire`, `smoke`, `explosion` and `rain` ship as placeholder files (Babylon's
  * stock presets). Replace or delete them once you have your own.
  */
-export type EffectName = "dust" | "sparks" | "splash" | "campfire" | "explosion" | "fire" | "smoke" | (string & {});
+export type EffectName = "dust" | "sparks" | "splash" | "campfire" | "brazier" | "explosion" | "fire" | "smoke" | (string & {});
 
 export interface EffectOptions {
   /** 1 is a sensible size next to the player (a fire about 1 m tall). */
@@ -438,6 +440,8 @@ export function createEffects(ctx: GameContext): Effects {
         const [flames, smoke] = await Promise.all([preset("fire", at, options), preset("smoke", smokeFrom, options)]);
         return handleFor([...flames, ...smoke], fireLight(at, scale));
       }
+      case "brazier":
+        return handleFor(await preset("fire", at, options), fireLight(at, scale));
       case "explosion": {
         const systems = await preset("explosion", origin.clone(), options);
         for (const system of systems) fadeOut(system); // each stops itself; clean up after
@@ -458,10 +462,12 @@ export function createEffects(ctx: GameContext): Effects {
     }
   }
 
-  let mapObserver: Nullable<Observer<Scene>> = null;
+  // One per map followed: a level, and any interior loaded beside it.
+  const mapObservers: Nullable<Observer<Scene>>[] = [];
   /** Names of map-placed effects that have been switched off. */
   const placedOff = new Set<string>();
-  let placedFrame = 0;
+  /** Raised when an effect is switched by hand, so every map looks at once instead of at its next check. */
+  let placedChanges = 0;
 
   return {
     spawn,
@@ -472,11 +478,15 @@ export function createEffects(ctx: GameContext): Effects {
       const placed = map.manifest.markers.filter((marker) => typeof marker.props.fx === "string");
       if (placed.length === 0) return;
       const running = new Map<MapMarker, { wanted: boolean; handle: EffectHandle | null }>();
-      mapObserver = scene.onBeforeRenderObservable.add(() => {
+      let frame = 0;
+      let seenChanges = placedChanges;
+      mapObservers.push(scene.onBeforeRenderObservable.add(() => {
         // Starting an effect takes about 10 ms (its particle systems are built
         // from the file each time), and a street of chimneys comes into range
         // all at once: so one start at most per look, a few frames apart.
-        if (placedFrame++ % 6 !== 0) return;
+        const due = frame++ % 6 === 0 || seenChanges !== placedChanges;
+        seenChanges = placedChanges;
+        if (!due) return;
         let started = false;
         for (const marker of placed) {
           const [x, y, z] = marker.position;
@@ -503,12 +513,12 @@ export function createEffects(ctx: GameContext): Effects {
             running.delete(marker);
           }
         }
-      });
+      }));
     },
     setPlaced(markerName, on) {
       if (on) placedOff.delete(markerName);
       else placedOff.add(markerName);
-      placedFrame = 0; // act on it this frame, not at the next half-second check
+      placedChanges++; // act on it this frame, not at the next check
     },
     get raining() {
       return rainWanted;
@@ -524,7 +534,7 @@ export function createEffects(ctx: GameContext): Effects {
     },
     dispose() {
       disposed = true;
-      scene.onBeforeRenderObservable.remove(mapObserver);
+      for (const observer of mapObservers) scene.onBeforeRenderObservable.remove(observer);
       scene.onBeforeRenderObservable.remove(reaper);
       for (const handle of [...live]) handle.dispose();
       for (const system of fading.keys()) system.dispose();

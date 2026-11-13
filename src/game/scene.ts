@@ -5,7 +5,7 @@ import { PhysicsHelper } from "@babylonjs/core/Physics/physicsHelper";
 import { Scene } from "@babylonjs/core/scene";
 import type { AbstractEngine, Mesh } from "@babylonjs/core";
 import type GUI from "lil-gui";
-import { ASSETS, type LevelInfo, type QualitySettings } from "../config";
+import { ASSETS, LEVELS, type LevelInfo, type QualitySettings } from "../config";
 import type { GameAudio } from "../engine/audio";
 import type { GameContext } from "../engine/context";
 import type { Input } from "../engine/input";
@@ -18,7 +18,9 @@ import { createEffects, type Effects } from "../engine/effects";
 import { createGroundCover } from "../engine/groundCover";
 import { loadMap, type StreamedMap } from "../engine/map";
 import { createNavigation, type Navigation } from "../engine/navigation";
+import { INDOORS, createSpaces, type Spaces } from "../engine/spaces";
 import { createTriggers, type Triggers } from "../engine/triggers";
+import type { WorldState } from "../engine/worldState";
 import { createWater, waterSurface } from "../engine/water";
 import { createWind } from "../engine/wind";
 import { createHud } from "./hud";
@@ -37,6 +39,14 @@ export interface SceneHost {
   quality: QualitySettings;
   /** Which level to build. */
   level: LevelInfo;
+  /** The marker to start at, when the level was reached through a door. Default: `spawn`. */
+  arrival?: string;
+  /** Leaves this scene for another level, arriving at `marker` there. */
+  travelTo(level: LevelInfo, marker?: string): void;
+  /** What the player has changed in the world: outlives scenes, saved in the browser. */
+  state: WorldState;
+  /** True to put the player where the saved game left them, instead of at the level's start. */
+  resume?: boolean;
   /** True when the debug tools are loaded (dev builds, or `?debug`). */
   debug: boolean;
 }
@@ -53,6 +63,8 @@ export interface GameScene {
   navigation: Navigation;
   /** Trigger zones and things the player can use. */
   triggers: Triggers;
+  /** This level, the interiors loaded beside it, and the doors between them. */
+  spaces: Spaces;
   /** Game time. `clock.paused = true` freezes the level (the menus use this). */
   clock: GameClock;
   /** Applies the player's saved preferences (look speed and so on). */
@@ -98,7 +110,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
     const renderer = await createRenderer(chooseRenderer(), scene, camera, quality, lighting);
 
     const clock = createClock(scene);
-    const ctx: GameContext = { engine, canvas, scene, camera, input, clock, quality, lighting, renderer, audio };
+    const ctx: GameContext = { engine, canvas, scene, camera, input, clock, quality, lighting, renderer, audio, state: host.state };
 
     // The world: a map streamed in around the camera, if this level has one.
     // If it fails to load (not exported yet, say), fall back to flat ground so
@@ -138,13 +150,26 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
     // also provide the ground, so then they are built regardless.)
     const level = map && host.level.demoProps === false ? { statics: [] } : buildLevel(ctx, map);
 
-    const marker = map?.marker("spawn");
+    const marker = (host.arrival ? map?.marker(host.arrival) : undefined) ?? map?.marker("spawn");
     const spawn = marker ? Vector3.FromArray(marker.position) : DEFAULT_SPAWN;
-    camera.position.copyFrom(spawn).addInPlaceFromFloats(0, 2, 0); // streaming follows the camera
-    await map?.whenLoadedAround(spawn); // ground must exist before anything stands on it
+    // Where the saved game left the player, if this level is being resumed:
+    // which place (the level itself or one of its interiors) and the spot.
+    const whereabouts = host.state.scope("player");
+    const saved =
+      host.resume && whereabouts.get("level", "") === host.level.id
+        ? {
+            space: whereabouts.get("space", host.level.id),
+            position: new Vector3(whereabouts.get("x", spawn.x), whereabouts.get("y", spawn.y), whereabouts.get("z", spawn.z)),
+            yaw: whereabouts.get("yaw", 0),
+          }
+        : null;
+    const outside = saved?.space === host.level.id ? saved : null; // resumed out in the level itself
+    const start = outside?.position ?? spawn;
+    camera.position.copyFrom(start).addInPlaceFromFloats(0, 2, 0); // streaming follows the camera
+    await map?.whenLoadedAround(start); // ground must exist before anything stands on it
 
     // The player floats and swims wherever either kind of water is deep enough.
-    const player = await createPlayer(ctx, { position: spawn, yaw: marker?.yaw ?? 0, waterLevel: waterSurface(water, sea) });
+    const player = await createPlayer(ctx, { position: start, yaw: outside?.yaw ?? marker?.yaw ?? 0, waterLevel: waterSurface(water, sea) });
     player.onJump.add(() => audio.play("jump", { playbackRate: 0.95 + Math.random() * 0.1 }));
     player.onLand.add((impactSpeed) => audio.play("land", { volume: Math.min(1, impactSpeed / 8) }));
 
@@ -191,11 +216,73 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
       effects,
       hud,
       map,
+      state: host.state.scope(host.level.id), // this level's own corner of the saved world
       blockNavigation(mesh, blocked) {
         if (blocked) blockers.add(mesh);
         else blockers.delete(mesh);
         void navigation.rebuild(walkable());
       },
+    });
+
+    // Doors. An Empty in Blender with `door = "hall#entrance"` leads to that
+    // marker in that space: an interior is loaded here, beside this level,
+    // and entered behind a short fade; another world replaces this scene.
+    const spaces = createSpaces(ctx, {
+      home: {
+        id: host.level.id,
+        map,
+        environment: host.level.indoors ? { ...INDOORS, ...host.level.environment } : host.level.environment,
+      },
+      lighting,
+      triggers,
+      find(id) {
+        // One of this level's interiors, or else another level.
+        const inside = host.level.interiors?.find((candidate) => candidate.id === id);
+        if (inside) return { id, map: inside.map, interior: true, environment: inside.environment };
+        const level = LEVELS.find((candidate) => candidate.id === id);
+        return level?.map ? { id, map: level.map, interior: false, environment: level.environment } : undefined;
+      },
+      async load(space, origin) {
+        const inside = await loadMap(ctx, space.map, {
+          viewDistance: quality.viewDistance,
+          materials: { Water: water.override, Sea: sea.override },
+          wind,
+          origin,
+          fog: false, // the level's own haze stands; each space says how much of it there is
+        });
+        effects.followMap(inside);
+        triggers.followMap(inside);
+        return inside;
+      },
+      place: (position, yaw) => player.teleport(position, yaw),
+      position: () => player.position,
+      leave(space, arriveAt) {
+        const next = LEVELS.find((candidate) => candidate.id === space.id);
+        if (next) host.travelTo(next, arriveAt);
+      },
+    });
+    // A door closing behind you.
+    spaces.onTravelled.add(() => audio.play("land", { volume: 0.5, playbackRate: 0.7 }));
+
+    // Where the player is goes into the saved game: on arriving anywhere, and
+    // every couple of seconds while standing on something (not in mid-fall,
+    // or "Continue" would resume the fall).
+    const remember = (): void => {
+      const at = player.position.subtract(spaces.origin(spaces.current)); // in the place's own coordinates
+      whereabouts.set("level", host.level.id);
+      whereabouts.set("space", spaces.current);
+      whereabouts.set("x", Math.round(at.x * 100) / 100);
+      whereabouts.set("y", Math.round(at.y * 100) / 100);
+      whereabouts.set("z", Math.round(at.z * 100) / 100);
+      whereabouts.set("yaw", Math.round(camera.rotation.y * 100) / 100);
+    };
+    spaces.onTravelled.add(remember);
+    let sinceRemembered = 0;
+    scene.onBeforeRenderObservable.add(() => {
+      sinceRemembered += clock.delta;
+      if (sinceRemembered < 2 || spaces.travelling || !player.isGrounded) return;
+      sinceRemembered = 0;
+      remember();
     });
 
     /** Moves the player somewhere else on the map, loading that area first. */
@@ -205,7 +292,10 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
     };
 
     scene.onBeforeRenderObservable.add(() => {
-      if (player.position.y < KILL_HEIGHT) player.teleport(spawn);
+      if (player.position.y >= KILL_HEIGHT || spaces.travelling) return;
+      // Fell out of the world. From inside a building, that means back out of its door.
+      if (spaces.current === host.level.id) player.teleport(spawn);
+      else void spaces.travel("back").catch(() => player.teleport(spawn));
     });
 
     // Don't show the world until its lighting is baked and shaders are compiled.
@@ -221,6 +311,15 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
     // lights, grass, characters), because what a material's shader contains
     // depends on all of it; and with the game running, so that fires and
     // smoke near each place start up and compile theirs.
+    /** Draws frames by hand: this scene is not on screen yet, so nothing else is drawing it. */
+    const draw = async (frames: number): Promise<void> => {
+      for (let i = 0; i < frames && !scene.isDisposed; i++) {
+        engine.beginFrame();
+        scene.render();
+        engine.endFrame();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
     if (map && host.level.warmUp?.length) {
       const eye = new Vector3();
       const target = new Vector3();
@@ -229,14 +328,6 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
         camera.position.copyFrom(eye);
         camera.setTarget(target);
       });
-      const draw = async (frames: number): Promise<void> => {
-        for (let i = 0; i < frames && !scene.isDisposed; i++) {
-          engine.beginFrame();
-          scene.render();
-          engine.endFrame();
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      };
       for (const name of host.level.warmUp) {
         const place = map.marker(name);
         if (!place || scene.isDisposed) continue;
@@ -254,10 +345,22 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
       }
       scene.onBeforeRenderObservable.remove(hold);
       // Back to the start. The ground there may have unloaded meanwhile.
-      camera.position.copyFrom(spawn).addInPlaceFromFloats(0, 2, 0);
-      await map.whenLoadedAround(spawn);
-      player.teleport(spawn);
+      camera.position.copyFrom(start).addInPlaceFromFloats(0, 2, 0);
+      await map.whenLoadedAround(start);
+      player.teleport(start);
       await draw(2);
+    }
+
+    // A game saved inside one of the level's interiors: go back in, to the
+    // same spot, before the loading screen lifts. The trip waits on frames,
+    // and nobody else is drawing this scene yet.
+    if (saved && !outside) {
+      let arrived = false;
+      void spaces
+        .travel(saved.space, { position: saved.position, yaw: saved.yaw })
+        .catch((error) => console.warn(`Could not resume in "${saved.space}":`, error))
+        .finally(() => (arrived = true));
+      while (!arrived && !scene.isDisposed) await draw(1);
     }
 
     return {
@@ -269,6 +372,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
       effects,
       navigation,
       triggers,
+      spaces,
       clock,
       applySettings(settings) {
         player.configure({
@@ -345,6 +449,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
         }
       },
       dispose() {
+        spaces.dispose();
         triggers.dispose();
         grass?.dispose();
         wind.dispose();

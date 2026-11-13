@@ -26,6 +26,8 @@ place — no page reload, the engine keeps running.
 | Water | Seas, moats and ponds: a surface that reflects the sky and sun, with drifting ripples, see-through from above and mirror-like toward the horizon, thinning to nothing where it meets the shore. The player floats and swims in it. One ordinary draw call, no extra passes. | `engine/water.ts` |
 | Maps | Worlds built in Blender, exported as chunks and streamed around the camera: full detail with collision up close, one-draw-call stand-ins in the distance. Anything placed many times (trees, props, window frames) is stored once and drawn as one static batch. Includes a test town and a test island. | `engine/map.ts`, `tools/blender/` |
 | Navigation | Where characters can walk, worked out from the loaded world as it streams (Recast, through Babylon's navigation add-on), with path finding and crowds of agents that avoid each other. Three wandering foxes show it off. | `engine/navigation.ts`, `game/npcs.ts` |
+| Doors and interiors | Places joined by doors placed in Blender. An interior (a hall, a shop, a cellar) is its own small map, loaded beside the level as the player walks up and entered behind a fade of about half a second; walking back out is as quick, because the level outside is held, not unloaded. A door to another level rebuilds the scene behind the loading screen and arrives at the marker the door names. Each place has its own light: how much sun, sky and haze reach it. | `engine/spaces.ts` |
+| Saved world | What the player has changed (a gate lowered, a fire put out) and where they are, kept across levels and saved in the browser as it changes, on Babylon's `DataStorage`. "Continue" and "New game" in the main menu. | `engine/worldState.ts` |
 | Triggers | Zones that report what walks in and out (Havok trigger shapes, so they also notice loose props), and things the player uses with the interact key, with an on-screen prompt. Placed in Blender or added in code; game code reacts by name. | `engine/triggers.ts`, `game/interactions.ts` |
 | Game shell | Main menu, pause, settings (quality, volume, look sensitivity) and level select, in Babylon GUI. Pausing freezes physics, animation and particles. | `game/shell.ts`, `engine/clock.ts`, `engine/settings.ts` |
 | Effects | Particle effects by name: code-defined bursts (dust, sparks), particle files from Babylon's editor, a campfire with flickering light, rain. Placeable in Blender. | `engine/effects.ts` |
@@ -137,6 +139,7 @@ opening in Blender to see how a map is put together:
 | Any other Empty | a marker: `map.marker("name")` gives position, facing and custom properties |
 | Empty with an `fx` property | a particle effect that runs while the player is near (e.g. `fx = "campfire"`; optional `fx_scale`) |
 | Empty with a `trigger` property | a zone, named by the property's value. Its volume is the Empty as drawn: display it as a Cube or Sphere and scale it to fit (it can turn about the vertical axis, not tilt) |
+| Empty with a `door` property | a door to another place: `door = "hall#entrance"` is the marker `entrance` in the level whose id is `hall` (`door = "back"`: wherever the player came in from). Used with the interact key; optional `prompt` and `radius`. With `walk = true` it is a zone that takes whoever walks in, sized like a `trigger` |
 | Empty with an `interact` property | something the player can use, named by the value. Optional `prompt` (the text shown) and `radius` (reach in metres, default 2) |
 | Object property `ground_cover` (any name, e.g. `grass`) | the game plants grass on this object. Paint where in Weight Paint mode, in a vertex group named `ground_cover` (1 thick, 0 bare); without the group it grows everywhere |
 | Material named `Water` or `Sea` | drawn as water (see "Add water"). `Water` is clear enough to see the bottom; `Sea` is opaque, for open water whose floor isn't modelled |
@@ -215,7 +218,8 @@ map.marker("spawn_pier");               // look up a Blender Empty
   the Frame Graph (same look; useful for comparing, or if a platform misbehaves).
 - `?debug` — load the debug tools in a production build.
 - `?level=island|town|flat` — start in a particular level (ids from `LEVELS`
-  in `config.ts`).
+  in `config.ts`). `?level=town/hall` starts inside one of its interiors.
+- `?continue` — pick the saved game up where it was. `?newgame` — forget it first.
 - `?menu` — in development the game starts straight in the level; this shows
   the main menu first, as players see it.
 
@@ -261,6 +265,62 @@ and balls) and `warmUp` (markers to look around from behind the loading
 screen, so the shaders for what is there are compiled before play: name a
 spot in the middle of anything out of sight of the spawn, or the first run
 toward it stutters).
+
+**Add an interior.** Build it as its own map, around the origin, closed on
+every side (walls with thickness, a roof): the sun stays on indoors and must
+only get in through the windows. Give it Empties named `spawn` and
+`entrance`, and one with `door = "back"` at the way out. Export it with no
+far versions and a chunk size larger than the room (`make-hall` in
+`tools/map.mjs` is the model; `tools/blender/make_town_hall.py` and its
+helpers in `tools/blender/kit.py` are the worked example). An interior
+belongs to a level, and is kept with it: its files go inside the level's own
+folder (`public/maps/test_town/interiors/hall/`) and it is listed inside the
+level's entry in `LEVELS`:
+
+```ts
+{
+  id: "town", name: "Test Town", map: "/maps/test_town/map.json",
+  interiors: [{ id: "hall", name: "Town Hall", map: "/maps/test_town/interiors/hall/map.json" }],
+},
+```
+
+Then put an Empty with `door = "hall#entrance"` where its door is in the
+level outside. That is all: the interior loads when the player comes within
+30 m of the door. `environment` on the entry sets its light (`sun`,
+`ambient`, `fog`, `exposure`, as shares of the level's own; interiors start
+from `INDOORS` in `engine/spaces.ts`). `?level=town/hall` starts inside it,
+for working on it.
+
+Rooms off rooms, a cellar under the hall, a cave system: each is another
+interior of the same level, joined by doors like any other (`door =
+"hall/cellar#stairs"` on an Empty inside the hall; `door = "back"` in the
+cellar). The list stays flat, because places joined by doors are a web and
+not a tree (a cave can open into the cellar and onto the hillside); show
+what belongs to what in the id and the folder: `hall/cellar` in
+`interiors/hall/cellar/`. Every interior that has been entered stays loaded
+until the level is left.
+
+**Send the player somewhere from code.** `spaces.travel("hall#entrance")`,
+`spaces.travel("island#spawn_pier")` (another level: the scene is rebuilt), or
+`spaces.travel("back")`. `spaces.preload("hall")` loads an interior early;
+`spaces.onTravelled` fires on arrival; `spaces.current` is where the player is.
+
+**Remember something the player did.** A level is rebuilt every time it is
+entered, the way its map says. What should stay changed goes in the world
+state (`engine/worldState.ts`), which outlives scenes and is saved in the
+browser as it changes:
+
+```ts
+state.set("gate.lowered", true);          // in interactions.ts, `state` is already this level's corner
+if (state.get("gate.lowered", false)) ...  // read it back when the thing is built again
+```
+
+Names are `<thing>.<property>`; `ctx.state` is the whole of it
+(`ctx.state.scope("town")`, or `"town/hall"` for an interior, gives a
+place's corner). The gate and the fires in `game/interactions.ts` are the
+worked examples. Where the player is (level, place, spot) is stored the
+same way, under `player/`, every couple of seconds; the main menu offers
+**Continue** and **New game** when there is something stored.
 
 **Make something respect pause.** Advance it by `ctx.clock.delta` (seconds this
 frame; 0 while a menu is up) instead of the raw frame time. Physics, animation
@@ -479,6 +539,7 @@ drag the sun sliders in the debug panel.
 | `npm run preview` | serve the production build locally |
 | `npm run map:export -- <file.blend>` | export a Blender map into `public/maps/` |
 | `npm run map:make-town` | regenerate and export the test town |
+| `npm run map:make-hall` | regenerate and export the inside of the town's hall (an interior: see "Add an interior") |
 | `npm run texture:get -- <id>` | fetch a surface texture set from Poly Haven into `maps/textures/` (`-- --search <word>` to find ids) |
 | `npm run model:get -- <id>` | fetch a scanned model (shrub, fern, rock) from Poly Haven into `maps/models/` (`-- --search <word>` lists ids with triangle counts) |
 | `npm run map:make-test` | regenerate and export the test island |
