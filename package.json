@@ -1,0 +1,35 @@
+{
+  "name": "babylon-game-scaffold",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "map:export": "node tools/map.mjs export",
+    "map:make-test": "node tools/map.mjs make-test",
+    "map:make-town": "node tools/map.mjs make-town",
+    "texture:get": "node tools/textures.mjs",
+    "model:get": "node tools/models.mjs"
+  },
+  "dependencies": {
+    "@babylonjs/addons": "^9.36.0",
+    "@babylonjs/core": "^9.36.0",
+    "@babylonjs/gui": "^9.36.0",
+    "@babylonjs/havok": "^1.3.14",
+    "@babylonjs/inspector": "^9.36.0",
+    "@babylonjs/loaders": "^9.36.0",
+    "@babylonjs/materials": "^9.36.0",
+    "@recast-navigation/core": "0.44.0",
+    "@recast-navigation/generators": "0.44.0",
+    "lil-gui": "^0.21.0"
+  },
+  "devDependencies": {
+    "@babylonjs/ktx2decoder": "^9.36.0",
+    "@babylonjs/ktx2encoder": "^9.36.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.6"
+  }
+}
