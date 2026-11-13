@@ -25,6 +25,7 @@
     "@babylonjs/materials": "^9.36.0",
     "@recast-navigation/core": "0.44.0",
     "@recast-navigation/generators": "0.44.0",
+    "inkjs": "2.4.0",
     "lil-gui": "^0.21.0"
   },
   "devDependencies": {

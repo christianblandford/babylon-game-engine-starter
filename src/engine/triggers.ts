@@ -120,6 +120,8 @@ export interface Triggers {
   onInteract(name: string, handler: (target: Interactable) => void): void;
   /** The interactable the player could use right now, if any. */
   readonly focus: Interactable | null;
+  /** True: nothing can be used for now and no prompt shows (a conversation has the interact key). Zones still report. */
+  suspended: boolean;
   /** Fires when `focus` changes, or its prompt does. */
   readonly onFocusChanged: Observable<Interactable | null>;
   /** Every zone of this name. */
@@ -301,8 +303,13 @@ export function createTriggers(ctx: GameContext, subject: TriggerSubject): Trigg
     return best;
   }
 
+  let suspended = false;
   const frameObserver = scene.onBeforeRenderObservable.add(() => {
     if (clock.paused) return;
+    if (suspended) {
+      setFocus(null);
+      return;
+    }
     setFocus(findFocus());
     if (focus && input.wasPressed("interact")) {
       const used = focus;
@@ -401,6 +408,12 @@ export function createTriggers(ctx: GameContext, subject: TriggerSubject): Trigg
     },
     get focus() {
       return focus;
+    },
+    get suspended() {
+      return suspended;
+    },
+    set suspended(on: boolean) {
+      suspended = on;
     },
     onFocusChanged,
     zones: (name) => [...zoneByBody.values()].filter((zone) => zone.name === name),

@@ -124,6 +124,15 @@ first.
   in it must be relative to `spaces.origin(place)`: where an interior sits
   in the scene depends on what was loaded before it.
 
+- Dialogue is Ink (`inkjs`, the one third-party runtime library besides
+  Recast: Babylon has nothing for it). Stories are `.ink` files in
+  `src/game/stories/`, compiled by the `ink` plugin in `vite.config.ts`;
+  `src/engine/dialogue.ts` plays them and ties them to `ctx.state` (`fact`,
+  `set_fact`, and the story's own memory under `dialogue/<story>`);
+  `src/game/conversations.ts` places the people (`talk` on a Blender Empty)
+  and runs the HUD box. Game logic a conversation needs goes through facts
+  in the saved world, not through new functions bound into Ink.
+
 - Trigger zones and usable things go through `src/engine/triggers.ts`; what
   they do belongs in `src/game/interactions.ts`, keyed by name. Zones are
   Havok trigger shapes reported by the physics plugin's

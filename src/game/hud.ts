@@ -1,6 +1,7 @@
 import { Control } from "@babylonjs/gui/2D/controls/control";
 import { Ellipse } from "@babylonjs/gui/2D/controls/ellipse";
 import { Rectangle } from "@babylonjs/gui/2D/controls/rectangle";
+import { StackPanel } from "@babylonjs/gui/2D/controls/stackPanel";
 import { TextBlock } from "@babylonjs/gui/2D/controls/textBlock";
 import type { AbstractMesh } from "@babylonjs/core";
 import type { GameContext } from "../engine/context";
@@ -15,6 +16,11 @@ export interface Hud {
   prompt(key: string, text: string | null): void;
   /** Shows a line of text near the top of the screen for a few seconds. */
   toast(text: string): void;
+  /**
+   * Shows what someone is saying, low on the screen: who, the line, the
+   * answers on offer (numbered) and a hint of what to press. Null puts it away.
+   */
+  say(speech: { speaker: string | null; text: string; choices: string[]; hint: string } | null): void;
   dispose(): void;
 }
 
@@ -84,6 +90,48 @@ export function createHud(ctx: GameContext, player: Player, showDebugHints: bool
   promptText.paddingLeftInPixels = promptText.paddingRightInPixels = 16;
   prompt.addControl(promptText);
 
+  // --- Dialogue ------------------------------------------------------------------
+  const speech = new Rectangle("speech");
+  speech.width = "92%";
+  speech.adaptHeightToChildren = true;
+  speech.cornerRadius = 14;
+  speech.thickness = 0;
+  speech.background = "rgba(10, 12, 16, 0.78)";
+  speech.verticalAlignment = Control.VERTICAL_ALIGNMENT_BOTTOM;
+  speech.topInPixels = -40;
+  speech.isVisible = false;
+  ui.addControl(speech);
+  // Never wider than is comfortable to read, nor than the window. (The UI is
+  // laid out in the page's own pixels, whatever resolution the game renders at.)
+  const fitSpeech = (): void => {
+    const windowWidth = ctx.engine.getRenderWidth() * ctx.engine.getHardwareScalingLevel();
+    speech.widthInPixels = Math.max(240, Math.min(760, windowWidth - 32));
+  };
+  const speechLines = new StackPanel("speechLines");
+  speechLines.isVertical = true;
+  speechLines.paddingTopInPixels = speechLines.paddingBottomInPixels = 16;
+  speechLines.paddingLeftInPixels = speechLines.paddingRightInPixels = 22;
+  speech.addControl(speechLines);
+  const speechText = (name: string, size: number, color: string, weight = "400"): TextBlock => {
+    const block = new TextBlock(name, "");
+    block.color = color;
+    block.fontFamily = FONT;
+    block.fontSizeInPixels = size;
+    block.fontWeight = weight;
+    block.lineSpacing = "5px";
+    block.textWrapping = true; // at words
+    block.resizeToFit = true;
+    block.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+    block.paddingBottomInPixels = 6;
+    speechLines.addControl(block);
+    return block;
+  };
+  const speechSpeaker = speechText("speechSpeaker", 14, "#8fb8ff", "700");
+  const speechLine = speechText("speechLine", 18, "#ffffff");
+  // One block per answer: a single block holding several lines sizes itself a line short and clips the last.
+  const speechChoices = Array.from({ length: 9 }, (_, i) => speechText(`speechChoice${i}`, 16, "#e8ecf1"));
+  const speechHint = speechText("speechHint", 12, "rgba(232, 236, 241, 0.6)");
+
   // --- Toast ---------------------------------------------------------------------
   const toast = new TextBlock("toast", "");
   toast.color = "#ffffff";
@@ -114,6 +162,20 @@ export function createHud(ctx: GameContext, player: Player, showDebugHints: bool
       toast.text = text;
       toast.alpha = 1;
       toastTime = 3;
+    },
+    say(said) {
+      speech.isVisible = said !== null;
+      hint.isVisible = said === null; // the controls hint would sit under it
+      if (!said) return;
+      fitSpeech();
+      speechSpeaker.text = said.speaker ?? "";
+      speechSpeaker.isVisible = said.speaker !== null;
+      speechLine.text = said.text;
+      speechChoices.forEach((block, i) => {
+        block.isVisible = i < said.choices.length;
+        if (block.isVisible) block.text = `${i + 1}.  ${said.choices[i]}`;
+      });
+      speechHint.text = said.hint;
     },
     label(mesh, text) {
       const tag = new Rectangle(`label:${mesh.name}`);

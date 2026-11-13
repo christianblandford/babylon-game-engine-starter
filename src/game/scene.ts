@@ -14,6 +14,7 @@ import { enablePhysics } from "../engine/physics";
 import { chooseRenderer, createRenderer, type Renderer } from "../engine/renderer";
 import { loadContainer } from "../engine/assets";
 import { createClock, type GameClock } from "../engine/clock";
+import type { Dialogue } from "../engine/dialogue";
 import { createEffects, type Effects } from "../engine/effects";
 import { createGroundCover } from "../engine/groundCover";
 import { loadMap, type StreamedMap } from "../engine/map";
@@ -23,6 +24,7 @@ import { createTriggers, type Triggers } from "../engine/triggers";
 import type { WorldState } from "../engine/worldState";
 import { createWater, waterSurface } from "../engine/water";
 import { createWind } from "../engine/wind";
+import { createConversations } from "./conversations";
 import { createHud } from "./hud";
 import { setUpInteractions } from "./interactions";
 import { buildLevel } from "./level";
@@ -65,6 +67,8 @@ export interface GameScene {
   triggers: Triggers;
   /** This level, the interiors loaded beside it, and the doors between them. */
   spaces: Spaces;
+  /** Stories and the conversation going on, if any. */
+  dialogue: Dialogue;
   /** Game time. `clock.paused = true` freezes the level (the menus use this). */
   clock: GameClock;
   /** Applies the player's saved preferences (look speed and so on). */
@@ -224,6 +228,11 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
       },
     });
 
+    // People to talk to: Empties with `talk = "<story>"`, saying what the
+    // story of that name in game/stories/ has them say.
+    const conversations = createConversations(ctx, { triggers, hud, player });
+    if (map) conversations.followMap(map);
+
     // Doors. An Empty in Blender with `door = "hall#entrance"` leads to that
     // marker in that space: an interior is loaded here, beside this level,
     // and entered behind a short fade; another world replaces this scene.
@@ -252,6 +261,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
         });
         effects.followMap(inside);
         triggers.followMap(inside);
+        conversations.followMap(inside);
         return inside;
       },
       place: (position, yaw) => player.teleport(position, yaw),
@@ -373,6 +383,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
       navigation,
       triggers,
       spaces,
+      dialogue: conversations.dialogue,
       clock,
       applySettings(settings) {
         player.configure({
@@ -449,6 +460,7 @@ export async function createGameScene(host: SceneHost): Promise<GameScene> {
         }
       },
       dispose() {
+        conversations.dispose();
         spaces.dispose();
         triggers.dispose();
         grass?.dispose();

@@ -535,6 +535,30 @@ collection in Blender) would remove that and make physics cheaper too.
 - Measured: door to arrival 0.4 s, 0.65 s including the fade back in, both
   ways. A door to another level (scene rebuilt) 3.3 s.
 
+## Dialogue
+
+- **Use Ink rather than inventing a format.** Branching dialogue as JSON
+  trees is unwritable past a dozen lines. Ink is text, has conditions,
+  variables and visit counts built in, and its runtime (`inkjs`) is 128 KB.
+  Compile stories in the build (a 20-line Vite plugin calling
+  `inkjs/full`): the page then ships only the runtime, and a mistake in a
+  story is a build error with a line number.
+- **Two functions are the whole bridge to the game**: `fact(name)` and
+  `set_fact(name, value)` over the saved world. A conversation that needs to
+  know or change something does it through a named fact, which the thing
+  itself (a gate, a quest) reads and writes too. Binding game functions
+  into stories one by one couples every story to code.
+- **Save the story's whole state** (`story.state.ToJson()`) per story in the
+  saved world, and reload it before `ChoosePathString(knot)`: visit counts
+  and variables survive, the position does not need to. A story edited
+  since the save may refuse its old state: catch that and start it afresh.
+- **The key that starts a conversation is still down on its first frame.**
+  Skip input for that one frame or the first line is never seen.
+- A Babylon GUI `TextBlock` with several lines, `lineSpacing` and
+  `resizeToFit` sizes itself a line short. One block per line.
+- The HUD is laid out in page pixels (`getRenderWidth() *
+  getHardwareScalingLevel()`), not in the pixels the game renders at.
+
 ## Testing in the browser
 
 When a lighting fault resists explanation, stop theorising and bisect with

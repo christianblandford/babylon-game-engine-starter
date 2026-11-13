@@ -27,6 +27,7 @@ place — no page reload, the engine keeps running.
 | Maps | Worlds built in Blender, exported as chunks and streamed around the camera: full detail with collision up close, one-draw-call stand-ins in the distance. Anything placed many times (trees, props, window frames) is stored once and drawn as one static batch. Includes a test town and a test island. | `engine/map.ts`, `tools/blender/` |
 | Navigation | Where characters can walk, worked out from the loaded world as it streams (Recast, through Babylon's navigation add-on), with path finding and crowds of agents that avoid each other. Three wandering foxes show it off. | `engine/navigation.ts`, `game/npcs.ts` |
 | Doors and interiors | Places joined by doors placed in Blender. An interior (a hall, a shop, a cellar) is its own small map, loaded beside the level as the player walks up and entered behind a fade of about half a second; walking back out is as quick, because the level outside is held, not unloaded. A door to another level rebuilds the scene behind the loading screen and arrives at the marker the door names. Each place has its own light: how much sun, sky and haze reach it. | `engine/spaces.ts` |
+| Dialogue | Conversations written in [Ink](https://www.inklestudios.com/ink): lines, choices, conditions and variables as plain text, compiled by the build and played by the `inkjs` runtime. A story remembers what was said (in the saved world), can ask what the player has done and can change it. People are placed in Blender (`talk = "steward"`); a box in the HUD shows the conversation and takes the keys. | `engine/dialogue.ts`, `game/conversations.ts`, `game/stories/` |
 | Saved world | What the player has changed (a gate lowered, a fire put out) and where they are, kept across levels and saved in the browser as it changes, on Babylon's `DataStorage`. "Continue" and "New game" in the main menu. | `engine/worldState.ts` |
 | Triggers | Zones that report what walks in and out (Havok trigger shapes, so they also notice loose props), and things the player uses with the interact key, with an on-screen prompt. Placed in Blender or added in code; game code reacts by name. | `engine/triggers.ts`, `game/interactions.ts` |
 | Game shell | Main menu, pause, settings (quality, volume, look sensitivity) and level select, in Babylon GUI. Pausing freezes physics, animation and particles. | `game/shell.ts`, `engine/clock.ts`, `engine/settings.ts` |
@@ -140,6 +141,7 @@ opening in Blender to see how a map is put together:
 | Empty with an `fx` property | a particle effect that runs while the player is near (e.g. `fx = "campfire"`; optional `fx_scale`) |
 | Empty with a `trigger` property | a zone, named by the property's value. Its volume is the Empty as drawn: display it as a Cube or Sphere and scale it to fit (it can turn about the vertical axis, not tilt) |
 | Empty with a `door` property | a door to another place: `door = "hall#entrance"` is the marker `entrance` in the level whose id is `hall` (`door = "back"`: wherever the player came in from). Used with the interact key; optional `prompt` and `radius`. With `walk = true` it is a zone that takes whoever walks in, sized like a `trigger` |
+| Empty with a `talk` property | someone to talk to: `talk = "steward"` plays the story `src/game/stories/steward.ink` (`"steward#knot"` starts at another knot). Optional `prompt` and `radius`; `npc = "fox"` stands a stand-in character there |
 | Empty with an `interact` property | something the player can use, named by the value. Optional `prompt` (the text shown) and `radius` (reach in metres, default 2) |
 | Object property `ground_cover` (any name, e.g. `grass`) | the game plants grass on this object. Paint where in Weight Paint mode, in a vertex group named `ground_cover` (1 thick, 0 bare); without the group it grows everywhere |
 | Material named `Water` or `Sea` | drawn as water (see "Add water"). `Water` is clear enough to see the bottom; `Sea` is opaque, for open water whose floor isn't modelled |
@@ -304,6 +306,27 @@ until the level is left.
 `spaces.travel("island#spawn_pier")` (another level: the scene is rebuilt), or
 `spaces.travel("back")`. `spaces.preload("hall")` loads an interior early;
 `spaces.onTravelled` fires on arrival; `spaces.current` is where the player is.
+
+**Give someone something to say.** Write a story in
+[Ink](https://github.com/inkle/ink/blob/master/Documentation/WritingWithInk.md)
+as `src/game/stories/<name>.ink` (it starts at a knot called `start`), and
+put an Empty in Blender with `talk = "<name>"` where they stand.
+`stories/steward.ink` is the worked example. Three things a story has
+beyond plain Ink:
+
+```ink
+EXTERNAL fact(name)
+EXTERNAL set_fact(name, value)
+
+{ fact("town/gate.lowered"): The gate is down, I see. }   // ask the saved world
+~ set_fact("town/steward.thanked", true)                 // change it
+Mind the hearth. # speaker: Steward                      // who is talking, until another tag says otherwise
+```
+
+Its own variables and what has already been said are remembered between
+conversations and across reloads. A mistake in a story fails the build with
+its line number. While someone talks the player stands still: every story
+should offer a way to say goodbye.
 
 **Remember something the player did.** A level is rebuilt every time it is
 entered, the way its map says. What should stay changed goes in the world
@@ -636,6 +659,9 @@ Draco geometry, KTX2 textures) before shipping.
 `public/assets/models/Fox.glb` is the Khronos glTF sample "Fox": model by
 PixelMannen (CC0), rigging and animation by @tomkranis (CC-BY 4.0), glTF
 conversion by @AsoboStudio and @scurest (CC-BY 4.0).
+
+Dialogue is played by [inkjs](https://github.com/y-lohse/inkjs) (MIT), a
+JavaScript port of inkle's Ink.
 
 `maps/textures/` and `maps/models/` hold surface textures and scanned plants
 from [Poly Haven](https://polyhaven.com) (CC0; each one's `info.json` names

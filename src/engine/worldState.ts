@@ -33,6 +33,8 @@ export type StateValue = string | number | boolean;
 export interface WorldState {
   /** The stored value, or `fallback` when there is none (or it is of another type). */
   get<T extends StateValue>(key: string, fallback: T): T;
+  /** The stored value whatever its type, or undefined. For when the caller cannot know the type. */
+  peek(key: string): StateValue | undefined;
   /** Stores a value; `undefined` forgets it. Setting what is already there does nothing. */
   set(key: string, value: StateValue | undefined): void;
   /** A view of this state that puts `prefix/` before every name. */
@@ -93,6 +95,7 @@ export function createWorldState(slot = "save"): WorldState {
         const value = values.get(name(key));
         return typeof value === typeof fallback ? (value as T) : fallback;
       },
+      peek: (key) => values.get(name(key)),
       set(key, value) {
         const full = name(key);
         if (values.get(full) === value) return;

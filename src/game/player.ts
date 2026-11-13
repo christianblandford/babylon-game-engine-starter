@@ -200,6 +200,8 @@ export interface Player {
   readonly onJump: Observable<void>;
   /** Fires on touchdown with the downward impact speed in m/s. */
   readonly onLand: Observable<number>;
+  /** True holds the character where it stands (it can still look around): while talking to someone, say. */
+  frozen: boolean;
   /** Moves the character instantly and stops it. `feetPosition` is where the feet end up; `yaw`, if given, is which way it then faces and looks. */
   teleport(feetPosition: Vector3, yaw?: number): void;
   /** Changes look settings on the fly (from a settings menu, say). */
@@ -272,6 +274,8 @@ const FIRST_PERSON_ZOOM_THRESHOLD = 0.9;
 const ANIMATION_BLEND_RESPONSE = 10;
 /** Time off the ground (s) before the airborne pose starts, so stairs and kerbs don't flicker into it. */
 const AIR_POSE_DELAY = 0.1;
+/** No movement asked for. */
+const STILL = { x: 0, y: 0 } as const;
 /** How long after being placed somewhere the character may settle onto the ground in silence (s). */
 const ARRIVAL_GRACE = 0.6;
 /** How far the body pitches with vertical speed while airborne: radians per m/s, and the most it will tilt. */
@@ -388,6 +392,7 @@ class PlayerController implements Player {
    * was dropped from a height, and lands as usual. A jump ends it at once.
    */
   private arriving = ARRIVAL_GRACE;
+  frozen = false;
   /** The water's surface height where the character is, while it is in water deep enough to matter. */
   private waterSurface = 0;
   /** 0 on land, 1 afloat: eases between, for the bob and the body's tilt. */
@@ -637,7 +642,7 @@ class PlayerController implements Player {
       }
     }
 
-    if (input.wasPressed("jump")) this.jumpBuffer = s.jumpBufferTime;
+    if (input.wasPressed("jump") && !this.frozen) this.jumpBuffer = s.jumpBufferTime;
   }
 
   // ---------------------------------------------------------------------
@@ -869,7 +874,7 @@ class PlayerController implements Player {
     }
 
     // Stick/WASD relative to where the camera looks, flattened onto the ground.
-    const move = this.input.move;
+    const move = this.frozen ? STILL : this.input.move;
     const swimming = this.state === "SWIMMING";
     const speed = (this.input.isDown("sprint") ? s.runSpeed : s.walkSpeed) * (swimming ? s.swimSpeed : 1);
     const sin = Math.sin(this.yaw);
@@ -990,7 +995,7 @@ class PlayerController implements Player {
   }
 
   private updateFacing(dt: number): void {
-    const move = this.input.move;
+    const move = this.frozen ? STILL : this.input.move;
     if (this.mode === "first") {
       // The body looks where the camera looks.
       this.facing = this.yaw;

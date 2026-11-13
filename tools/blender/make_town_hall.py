@@ -1211,6 +1211,10 @@ mark("spawn", INSIDE_DOOR, 0.0, 0.2, facing=WESTWARD)
 mark("entrance", INSIDE_DOOR, 0.0, 0.2, facing=WESTWARD)  # where the player arrives from the town
 mark("exit", L - 0.2, 0.0, 1.2, facing=WESTWARD, door="back", prompt="Leave", radius=2.4)
 mark("poi_dais", DAIS_FRONT - 0.5, 0.0, DAIS + 0.2, facing=-WESTWARD)
+# Someone to talk to: he says what the story `steward` has him say
+# (src/game/stories/steward.ink), and `npc` asks the game to stand a
+# character here. At the front of the dais, facing down the hall.
+mark("steward", DAIS_FRONT - 0.55, 0.0, DAIS, facing=-WESTWARD, talk="steward", prompt="Talk to the steward", radius=2.6, npc="fox")
 
 # Fires. `campfire` is flames, smoke and a flickering light, and the game has
 # lights for eight at most: these are five.
