@@ -118,6 +118,11 @@ async function boot(): Promise<void> {
     // "Play" on the level already idling behind the menu just starts it;
     // anything else (another level, or a restart mid-game) loads fresh.
     const fresh = level !== shell.currentLevel || shell.state === "paused";
+    // "Restart level" means the level as it was at its start: what was done
+    // in it (a gate lowered, a fire put out) is forgotten. Without that,
+    // lowering the town's gate and restarting leaves the player on the road
+    // outside, and the only lever is inside.
+    if (level === shell.currentLevel && shell.state === "paused") state.forget(`${level.id}/`);
     void (fresh ? loadScene(factory, level) : Promise.resolve()).then(() => shell.resume());
   });
 

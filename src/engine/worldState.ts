@@ -43,6 +43,8 @@ export interface WorldState {
   readonly onChanged: Observable<{ key: string; value: StateValue | undefined }>;
   /** True if anything is stored: there is a game to continue. */
   readonly any: boolean;
+  /** Forgets every value whose name starts with `prefix`: a level, say, and all that was done in it. */
+  forget(prefix: string): void;
   /** Forgets everything: a new game. */
   reset(): void;
   /** Writes to the browser now, instead of a moment after the last change. */
@@ -108,6 +110,12 @@ export function createWorldState(slot = "save"): WorldState {
       onChanged,
       get any() {
         return values.size > 0;
+      },
+      forget(inner) {
+        const keys = [...values.keys()].filter((key) => key.startsWith(prefix + inner));
+        for (const key of keys) values.delete(key);
+        if (keys.length > 0) flush();
+        for (const key of keys) onChanged.notifyObservers({ key, value: undefined });
       },
       reset() {
         const keys = [...values.keys()];

@@ -11,3 +11,6 @@ maps/test_*.blend
 
 # Python byte-code caches, written when Blender runs the scripts.
 __pycache__/
+
+# The three.js comparison prototype: its own repository (christianblandford/threejs-game).
+/threejs-game/

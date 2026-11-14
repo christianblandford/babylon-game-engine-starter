@@ -617,6 +617,29 @@ than that would have.
   `?renderer=classic`, and `?engine=webgl`. Shader plugins especially: the
   GLSL half is only exercised on WebGL2, the WGSL half only on WebGPU.
 
+## Would three.js be faster?
+
+Measured, not guessed: the test town was loaded into a three.js r187
+prototype (its own repository, `threejs-game`) with the "high" preset's
+features matched by name, and timed the same way.
+
+- At 2.25 million pixels: 29.5 ms on three against 23.3 ms here. three's
+  bare scene (no shadows, no effects) is about twice as fast, 8.3 ms
+  against roughly 15; its stock shadow cascades cost 7.6 ms against about
+  4, and its stock effects 13.7 ms against about 4.6.
+- The comparison flatters three: its frame has no grass, particles,
+  characters, HUD, physics, or this project's material extensions.
+- Tuned as this project was, three would land at about the same frame rate.
+  A port is a rewrite of `src/engine/` for parity, not a leap. What moves
+  frame rate and looks more than either engine: baked lighting, and
+  rendering fewer pixels.
+- **A trap when timing three by hand:** it redraws the scene once per tick
+  of its own animation loop, so a loop of manual `render()` calls redraws
+  only the last full-screen quad. The first numbers said 2.7 ms a frame.
+  Counting the GPU's draw calls per frame (wrap
+  `GPURenderPassEncoder.prototype.drawIndexed`) is what exposed it; it is a
+  good habit for any benchmark.
+
 ## Choices not taken
 
 - **Babylon's `WaterMaterial`**: draws the scene twice more per frame through
